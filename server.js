@@ -96,7 +96,7 @@ function convertWithYtdl(url, filepath, res) {
         fs.unlinkSync(filepath);
       }
       
-      // Create audio stream
+      // Create audio stream with current config
       const audioStream = ytdl(url, {
         ...config,
         highWaterMark: 1 << 25, // Increase buffer size for better performance
@@ -110,6 +110,13 @@ function convertWithYtdl(url, filepath, res) {
       // Handle audio stream errors
       audioStream.on('error', (err) => {
         console.error(`ytdl-core config ${attempt + 1} error:`, err.message);
+        
+        // Check if it's a 410 error (Gone)
+        if (err.message.includes('Status code: 410') || err.message.includes('410')) {
+          reject(new Error('This video is no longer available (Status code: 410). It may have been removed or is unavailable.'));
+          return;
+        }
+        
         attempt++;
         tryConfig(); // Try next config
       });
@@ -431,10 +438,23 @@ app.post('/convert', async (req, res) => {
         fs.unlinkSync(filepath);
       }
       
-      // Try youtube-dl-exec as second fallback
-      console.log('Trying youtube-dl-exec as fallback...');
-      try {
-        await convertWithYoutubeDlExec(url, filepath);
+      // Check if it's a 410 error (Gone)
+      if (ytdlError.message.includes('Status code: 410') || ytdlError.message.includes('410')) {
+        console.log('Video is no longer available (Status code: 410)');
+        return res.status(404).json({ 
+          error: 'This video is no longer available (Status code: 410). It may have been removed or is unavailable.' 
+        });
+      }
+      
+      // Check if authentication is required
+      if (ytdlError.message.includes("Sign in to confirm you're not a bot") || 
+          ytdlError.message.includes("confirm you're not a bot") ||
+          ytdlError.message.includes('authentication')) {
+        console.log('Authentication required for this video');
+        return res.status(403).json({ 
+          error: 'This video requires authentication/sign-in. Unfortunately, this service cannot download protected content. Please try a different video.' 
+        });
+      }
         
         // If successful, return response
         if (!res.headersSent) {
@@ -462,6 +482,14 @@ app.post('/convert', async (req, res) => {
         // Clean up failed file if it exists
         if (fs.existsSync(filepath)) {
           fs.unlinkSync(filepath);
+        }
+        
+        // Check if it's a 410 error (Gone)
+        if (youtubeDlExecError.message.includes('Status code: 410') || youtubeDlExecError.message.includes('410')) {
+          console.log('Video is no longer available (Status code: 410)');
+          return res.status(404).json({ 
+            error: 'This video is no longer available (Status code: 410). It may have been removed or is unavailable.' 
+          });
         }
         
         // Check if authentication is required
