@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YT to MP3 Converter</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="App">
+        <!-- Header -->
+        <header>
+            <div class="container">
+                <div class="header-content">
+                    <h1 class="header-title">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-400">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        YT to MP3
+                    </h1>
+                    <div class="quality-badge">
+                        320kbps Audio
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Converter Section -->
+            <div class="converter-section">
+                <div class="converter-box">
+                    <div class="converter-form">
+                        <input
+                            type="text"
+                            id="videoUrl"
+                            placeholder="YouTube URL..."
+                            class="input-field"
+                        />
+                        <button
+                            id="convertButton"
+                            class="convert-button"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            Convert
+                        </button>
+                    </div>
+
+                    <button
+                        id="getCurrentTabButton"
+                        class="paste-button"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                        </svg>
+                        Use Current Tab
+                    </button>
+                </div>
+
+                <!-- Loading State -->
+                <div id="loadingBox" class="loading-box" style="display: none;">
+                    <div class="spinner"></div>
+                    <h3 class="loading-title">Converting...</h3>
+                    <p class="loading-text">Please wait</p>
+                    <div class="progress-bar">
+                        <div class="progress-fill"></div>
+                    </div>
+                </div>
+
+                <!-- Result State -->
+                <div id="resultBox" class="result-box" style="display: none;">
+                    <div class="result-header">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-green-500">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+                            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+                        </svg>
+                        <h2 class="result-title">Complete!</h2>
+                        <p class="result-subtitle">MP3 ready</p>
+                    </div>
+
+                    <div class="video-info">
+                        <div class="video-content">
+                            <img 
+                                id="videoThumbnail"
+                                alt="Video thumbnail" 
+                                class="video-thumbnail"
+                            />
+                            <div class="video-details">
+                                <h3 id="videoTitle" class="video-title"></h3>
+                                <div class="video-meta">
+                                    <span class="meta-item">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                                        </svg>
+                                        <span id="videoDuration"></span>
+                                    </span>
+                                    <span class="meta-item">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                            <path d="M3 18v-6a9 9 0 0 1 18 0v6"></path>
+                                            <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"></path>
+                                        </svg>
+                                        320kbps
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="text-center">
+                        <button
+                            id="downloadButton"
+                            class="download-button"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                <polyline points="7 10 12 15 17 10"></polyline>
+                                <line x1="12" y1="15" x2="12" y2="3"></line>
+                            </svg>
+                            Download MP3
+                        </button>
+                        <p class="file-size">File size: ~0 MB</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <script src="popup.js"></script>
+    </div>
+</body>
+</html>
