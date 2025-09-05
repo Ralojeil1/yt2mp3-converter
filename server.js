@@ -39,68 +39,84 @@ function isYtDlpAvailable() {
   });
 }
 
-// Function to get video info using ytdl-core
-async function getVideoInfoWithYtdl(url) {
-  try {
-    console.log('Getting video info with ytdl-core...');
-    const info = await ytdl.getInfo(url);
-    console.log('Video info retrieved successfully with ytdl-core');
-    return {
-      title: info.videoDetails.title,
-      duration: info.videoDetails.lengthSeconds,
-      thumbnail: info.videoDetails.thumbnails[0]?.url || ''
-    };
-  } catch (error) {
-    console.error('Error getting video info with ytdl-core:', error);
-    throw error;
-  }
-}
-
-// Function to convert using ytdl-core
+// Function to convert using ytdl-core with fallback options
 function convertWithYtdl(url, filepath, res) {
   return new Promise((resolve, reject) => {
     console.log('Converting with ytdl-core...');
     
-    // Create audio stream
-    const audioStream = ytdl(url, {
-      filter: 'audioonly',
-      quality: 'highestaudio',
-      highWaterMark: 1 << 25 // Increase buffer size for better performance
-    });
+    // Try different ytdl-core configurations as fallbacks
+    const configs = [
+      { filter: 'audioonly', quality: 'highestaudio' },
+      { filter: 'audioonly', quality: 'lowestaudio' },
+      { quality: 'highest' },
+      { quality: 'lowest' }
+    ];
     
-    // Handle audio stream errors
-    audioStream.on('error', (err) => {
-      console.error('Audio stream error:', err);
-      reject(new Error('Failed to download audio: ' + err.message));
-    });
+    let attempt = 0;
     
-    // Create write stream
-    const fileStream = fs.createWriteStream(filepath);
-    
-    // Handle file stream errors
-    fileStream.on('error', (err) => {
-      console.error('File stream error:', err);
-      reject(new Error('Failed to save file: ' + err.message));
-    });
-    
-    // Pipe audio to file
-    audioStream.pipe(fileStream);
-    
-    fileStream.on('finish', () => {
-      console.log('File saved successfully with ytdl-core:', filepath);
-      fileStream.end();
-      resolve();
-    });
-    
-    // Add timeout to prevent hanging
-    setTimeout(() => {
-      console.log('ytdl-core conversion timeout');
-      // Clean up potentially incomplete file
+    const tryConfig = () => {
+      if (attempt >= configs.length) {
+        reject(new Error('All ytdl-core configurations failed'));
+        return;
+      }
+      
+      const config = configs[attempt];
+      console.log(`Trying ytdl-core config ${attempt + 1}:`, config);
+      
+      // Clean up previous attempt if it exists
       if (fs.existsSync(filepath)) {
         fs.unlinkSync(filepath);
       }
-      reject(new Error('Conversion timed out with ytdl-core'));
-    }, 120000); // 120 second timeout (2 minutes)
+      
+      // Create audio stream with current config
+      const audioStream = ytdl(url, {
+        ...config,
+        highWaterMark: 1 << 25, // Increase buffer size
+        requestOptions: {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+          }
+        }
+      });
+      
+      // Handle audio stream errors
+      audioStream.on('error', (err) => {
+        console.error(`ytdl-core config ${attempt + 1} error:`, err.message);
+        attempt++;
+        tryConfig(); // Try next config
+      });
+      
+      // Create write stream
+      const fileStream = fs.createWriteStream(filepath);
+      
+      // Handle file stream errors
+      fileStream.on('error', (err) => {
+        console.error('File stream error:', err);
+        reject(new Error('Failed to save file: ' + err.message));
+      });
+      
+      // Pipe audio to file
+      audioStream.pipe(fileStream);
+      
+      fileStream.on('finish', () => {
+        console.log('File saved successfully with ytdl-core config:', attempt + 1);
+        fileStream.end();
+        resolve();
+      });
+      
+      // Add timeout to prevent hanging
+      setTimeout(() => {
+        console.log(`ytdl-core config ${attempt + 1} timeout`);
+        // Clean up potentially incomplete file
+        if (fs.existsSync(filepath)) {
+          fs.unlinkSync(filepath);
+        }
+        attempt++;
+        tryConfig(); // Try next config
+      }, 60000); // 60 second timeout
+    };
+    
+    tryConfig(); // Start with first config
   });
 }
 
@@ -109,43 +125,66 @@ function convertWithYtDlp(url, filepath, res) {
   return new Promise((resolve, reject) => {
     console.log('Converting with yt-dlp...');
     
-    // Use yt-dlp to download and convert with higher quality
-    const command = `yt-dlp -f bestaudio -x --audio-format mp3 --audio-quality 0 --output "${filepath}" "${url}"`;
-    console.log('Executing yt-dlp command:', command);
+    // Try different yt-dlp configurations as fallbacks
+    const commands = [
+      `yt-dlp -f bestaudio -x --audio-format mp3 --audio-quality 0 --output "${filepath}" "${url}"`,
+      `yt-dlp -f worstaudio -x --audio-format mp3 --output "${filepath}" "${url}"`,
+      `yt-dlp -f ba -x --audio-format mp3 --output "${filepath}" "${url}"`,
+      `yt-dlp -x --audio-format mp3 --output "${filepath}" "${url}"`
+    ];
     
-    const ytDlpProcess = exec(command, (error, stdout, stderr) => {
-      if (error) {
-        console.error('yt-dlp error:', error);
-        console.error('yt-dlp stderr:', stderr);
+    let attempt = 0;
+    
+    const tryCommand = () => {
+      if (attempt >= commands.length) {
+        reject(new Error('All yt-dlp commands failed'));
+        return;
+      }
+      
+      const command = commands[attempt];
+      console.log(`Trying yt-dlp command ${attempt + 1}:`, command);
+      
+      // Clean up previous attempt if it exists
+      if (fs.existsSync(filepath)) {
+        fs.unlinkSync(filepath);
+      }
+      
+      const ytDlpProcess = exec(command, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`yt-dlp command ${attempt + 1} error:`, error.message);
+          console.error('yt-dlp stderr:', stderr);
+          attempt++;
+          tryCommand(); // Try next command
+          return;
+        }
+        
+        console.log(`yt-dlp command ${attempt + 1} success:`, stdout);
+        // Check if file was created
+        if (!fs.existsSync(filepath)) {
+          console.error(`yt-dlp command ${attempt + 1} failed: File not created`);
+          attempt++;
+          tryCommand(); // Try next command
+          return;
+        }
+        
+        resolve();
+      });
+      
+      // Add timeout for yt-dlp process
+      setTimeout(() => {
+        console.log(`yt-dlp command ${attempt + 1} timeout`);
+        // Kill the process if it's still running
+        ytDlpProcess.kill();
         // Clean up potentially incomplete file
         if (fs.existsSync(filepath)) {
           fs.unlinkSync(filepath);
         }
-        reject(new Error('Conversion failed with yt-dlp: ' + (stderr || error.message)));
-        return;
-      }
-      
-      console.log('yt-dlp success:', stdout);
-      // Check if file was created
-      if (!fs.existsSync(filepath)) {
-        reject(new Error('File was not created with yt-dlp'));
-        return;
-      }
-      
-      resolve();
-    });
+        attempt++;
+        tryCommand(); // Try next command
+      }, 60000); // 60 second timeout
+    };
     
-    // Add timeout for yt-dlp process
-    setTimeout(() => {
-      console.log('yt-dlp conversion timeout');
-      // Kill the process if it's still running
-      ytDlpProcess.kill();
-      // Clean up potentially incomplete file
-      if (fs.existsSync(filepath)) {
-        fs.unlinkSync(filepath);
-      }
-      reject(new Error('Conversion timed out with yt-dlp'));
-    }, 120000); // 120 second timeout (2 minutes)
+    tryCommand(); // Start with first command
   });
 }
 
@@ -195,7 +234,7 @@ app.post('/convert', async (req, res) => {
       }
       return;
     } catch (ytdlError) {
-      console.error('ytdl-core failed:', ytdlError.message);
+      console.error('ytdl-core failed after all attempts:', ytdlError.message);
       
       // Clean up failed file if it exists
       if (fs.existsSync(filepath)) {
@@ -239,9 +278,9 @@ app.post('/convert', async (req, res) => {
         }
         return;
       } catch (ytDlpError) {
-        console.error('yt-dlp failed:', ytDlpError.message);
+        console.error('yt-dlp failed after all attempts:', ytDlpError.message);
         return res.status(500).json({ 
-          error: 'Both ytdl-core and yt-dlp failed. ytdl-core error: ' + ytdlError.message + '. yt-dlp error: ' + ytDlpError.message
+          error: 'Both ytdl-core and yt-dlp failed after multiple attempts. ytdl-core error: ' + ytdlError.message + '. yt-dlp error: ' + ytDlpError.message
         });
       }
     }
