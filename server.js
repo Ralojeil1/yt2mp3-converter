@@ -1,7 +1,6 @@
 const express = require('express');
 const ytdl = require('ytdl-core');
 const { exec } = require('child_process');
-const { youtubeDl } = require('youtube-dl-exec');
 const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
@@ -50,56 +49,17 @@ function isYoutubeDlAvailable() {
   });
 }
 
-// Function to get video info using ytdl-core
-async function getVideoInfoWithYtdl(url) {
-  try {
-    console.log('Getting video info with ytdl-core...');
-    const info = await ytdl.getInfo(url);
-    console.log('Video info retrieved successfully with ytdl-core');
-    return {
-      title: info.videoDetails.title,
-      duration: info.videoDetails.lengthSeconds,
-      thumbnail: info.videoDetails.thumbnails[0]?.url || ''
-    };
-  } catch (error) {
-    console.error('Error getting video info with ytdl-core:', error);
-    throw error;
-  }
-}
-
-// Function to convert using ytdl-core with fallback options
-function convertWithYtdl(url, filepath, res) {
+// Function to convert using a simple approach with better error handling
+async function convertVideo(url, filepath) {
   return new Promise((resolve, reject) => {
-    console.log('Converting with ytdl-core...');
+    console.log('Converting video with fallback approach...');
     
-    // Try different ytdl-core configurations as fallbacks
-    const configs = [
-      { filter: 'audioonly', quality: 'highestaudio' },
-      { filter: 'audioonly', quality: 'lowestaudio' },
-      { quality: 'highest' },
-      { quality: 'lowest' }
-    ];
-    
-    let attempt = 0;
-    
-    const tryConfig = () => {
-      if (attempt >= configs.length) {
-        reject(new Error('All ytdl-core configurations failed'));
-        return;
-      }
-      
-      const config = configs[attempt];
-      console.log(`Trying ytdl-core config ${attempt + 1}:`, config);
-      
-      // Clean up previous attempt if it exists
-      if (fs.existsSync(filepath)) {
-        fs.unlinkSync(filepath);
-      }
-      
-      // Create audio stream with current config
-      const audioStream = ytdl(url, {
-        ...config,
-        highWaterMark: 1 << 25, // Increase buffer size for better performance
+    // Try a simpler approach first
+    try {
+      const videoStream = ytdl(url, {
+        filter: 'audioonly',
+        quality: 'highestaudio',
+        highWaterMark: 1 << 25, // Increase buffer size
         requestOptions: {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -107,281 +67,53 @@ function convertWithYtdl(url, filepath, res) {
         }
       });
       
-      // Handle audio stream errors
-      audioStream.on('error', (err) => {
-        console.error(`ytdl-core config ${attempt + 1} error:`, err.message);
-        
-        // Check if it's a 410 error (Gone)
-        if (err.message.includes('Status code: 410') || err.message.includes('410')) {
-          reject(new Error('This video is no longer available (Status code: 410). It may have been removed or is unavailable.'));
-          return;
+      let timeoutId;
+      
+      // Set a timeout to prevent hanging
+      timeoutId = setTimeout(() => {
+        console.log('Conversion timeout - cleaning up');
+        if (fs.existsSync(filepath)) {
+          fs.unlinkSync(filepath);
         }
+        reject(new Error('Conversion timed out - this may indicate the video requires authentication or is not accessible'));
+      }, 90000); // 90 second timeout
+      
+      videoStream.on('error', (err) => {
+        clearTimeout(timeoutId);
+        console.error('Video stream error:', err.message);
         
-        attempt++;
-        tryConfig(); // Try next config
+        // Check for specific error conditions
+        if (err.message.includes('Status code: 410') || err.message.includes('410')) {
+          reject(new Error('This video may require authentication or is not publicly accessible. YouTube often restricts automated access to certain content.'));
+        } else if (err.message.includes('Sign in to confirm you') || 
+                   err.message.includes('bot') ||
+                   err.message.includes('authenticate')) {
+          reject(new Error('This video requires authentication/sign-in. YouTube restricts automated downloading of protected content.'));
+        } else {
+          reject(new Error('Failed to access video: ' + err.message));
+        }
       });
       
-      // Create write stream
       const fileStream = fs.createWriteStream(filepath);
       
-      // Handle file stream errors
       fileStream.on('error', (err) => {
+        clearTimeout(timeoutId);
         console.error('File stream error:', err);
         reject(new Error('Failed to save file: ' + err.message));
       });
       
-      // Pipe audio to file
-      audioStream.pipe(fileStream);
-      
       fileStream.on('finish', () => {
-        console.log('File saved successfully with ytdl-core config:', attempt + 1);
-        fileStream.end();
+        clearTimeout(timeoutId);
+        console.log('File saved successfully');
         resolve();
       });
       
-      // Add timeout to prevent hanging
-      setTimeout(() => {
-        console.log(`ytdl-core config ${attempt + 1} timeout`);
-        // Clean up potentially incomplete file
-        if (fs.existsSync(filepath)) {
-          fs.unlinkSync(filepath);
-        }
-        attempt++;
-        tryConfig(); // Try next config
-      }, 60000); // 60 second timeout
-    };
-    
-    tryConfig(); // Start with first config
-  });
-}
-
-// Function to convert using youtube-dl-exec
-async function convertWithYoutubeDlExec(url, filepath) {
-  try {
-    console.log('Converting with youtube-dl-exec...');
-    
-    // Remove .mp3 extension as youtube-dl will add it
-    const outputPath = filepath.replace('.mp3', '');
-    
-    // Try different configurations
-    const configs = [
-      {
-        extractAudio: true,
-        audioFormat: 'mp3',
-        output: outputPath,
-        preferFreeFormats: true
-      },
-      {
-        extractAudio: true,
-        audioFormat: 'mp3',
-        output: outputPath,
-        preferFreeFormats: true,
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      },
-      {
-        extractAudio: true,
-        audioFormat: 'mp3',
-        output: outputPath,
-        preferFreeFormats: true,
-        noCheckCertificates: true
-      }
-    ];
-    
-    let lastError = null;
-    
-    for (let i = 0; i < configs.length; i++) {
-      try {
-        console.log(`Trying youtube-dl-exec config ${i + 1}:`, configs[i]);
-        await youtubeDl(url, configs[i]);
-        
-        // Check if file was created with .mp3 extension
-        if (!fs.existsSync(filepath)) {
-          // Sometimes youtube-dl creates files with different extensions
-          const possibleFiles = [
-            `${outputPath}.mp3`,
-            `${outputPath}.webm`,
-            `${outputPath}.m4a`
-          ];
-          
-          for (const file of possibleFiles) {
-            if (fs.existsSync(file)) {
-              // Rename to .mp3 if needed
-              fs.renameSync(file, filepath);
-              break;
-            }
-          }
-        }
-        
-        if (fs.existsSync(filepath)) {
-          console.log('File saved successfully with youtube-dl-exec config:', i + 1);
-          return;
-        }
-      } catch (error) {
-        console.error(`youtube-dl-exec config ${i + 1} error:`, error.message);
-        lastError = error;
-      }
+      videoStream.pipe(fileStream);
+      
+    } catch (error) {
+      console.error('Conversion error:', error);
+      reject(new Error('Conversion failed: ' + error.message));
     }
-    
-    if (!fs.existsSync(filepath)) {
-      throw new Error('File was not created with youtube-dl-exec. Last error: ' + (lastError?.message || 'Unknown error'));
-    }
-  } catch (error) {
-    console.error('youtube-dl-exec error:', error);
-    throw new Error('Failed with youtube-dl-exec: ' + error.message);
-  }
-}
-
-// Function to convert using youtube-dl (original tool)
-function convertWithYoutubeDl(url, filepath, res) {
-  return new Promise((resolve, reject) => {
-    console.log('Converting with youtube-dl...');
-    
-    // Try different youtube-dl configurations as fallbacks
-    const commands = [
-      `youtube-dl -f bestaudio -x --audio-format mp3 --audio-quality 0 --output "${filepath}" "${url}"`,
-      `youtube-dl -f worstaudio -x --audio-format mp3 --output "${filepath}" "${url}"`,
-      `youtube-dl -f ba -x --audio-format mp3 --output "${filepath}" "${url}"`,
-      `youtube-dl -x --audio-format mp3 --output "${filepath}" "${url}"`
-    ];
-    
-    let attempt = 0;
-    
-    const tryCommand = () => {
-      if (attempt >= commands.length) {
-        reject(new Error('All youtube-dl commands failed'));
-        return;
-      }
-      
-      const command = commands[attempt];
-      console.log(`Trying youtube-dl command ${attempt + 1}:`, command);
-      
-      // Clean up previous attempt if it exists
-      if (fs.existsSync(filepath)) {
-        fs.unlinkSync(filepath);
-      }
-      
-      const youtubeDlProcess = exec(command, (error, stdout, stderr) => {
-        if (error) {
-          console.error(`youtube-dl command ${attempt + 1} error:`, error.message);
-          console.error('youtube-dl stderr:', stderr);
-          
-          // Check if authentication is required
-          if (stderr && (stderr.includes("Sign in to confirm you're not a bot") || 
-              stderr.includes("confirm you're not a bot") ||
-              stderr.includes('authentication'))) {
-            reject(new Error('This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.'));
-            return;
-          }
-          
-          attempt++;
-          tryCommand(); // Try next command
-          return;
-        }
-        
-        console.log(`youtube-dl command ${attempt + 1} success:`, stdout);
-        // Check if file was created
-        if (!fs.existsSync(filepath)) {
-          console.error(`youtube-dl command ${attempt + 1} failed: File not created`);
-          attempt++;
-          tryCommand(); // Try next command
-          return;
-        }
-        
-        resolve();
-      });
-      
-      // Add timeout for youtube-dl process
-      setTimeout(() => {
-        console.log(`youtube-dl command ${attempt + 1} timeout`);
-        // Kill the process if it's still running
-        youtubeDlProcess.kill();
-        // Clean up potentially incomplete file
-        if (fs.existsSync(filepath)) {
-          fs.unlinkSync(filepath);
-        }
-        attempt++;
-        tryCommand(); // Try next command
-      }, 60000); // 60 second timeout
-    };
-    
-    tryCommand(); // Start with first command
-  });
-}
-
-// Function to convert using yt-dlp
-function convertWithYtDlp(url, filepath, res) {
-  return new Promise((resolve, reject) => {
-    console.log('Converting with yt-dlp...');
-    
-    // Try different yt-dlp configurations as fallbacks
-    const commands = [
-      `yt-dlp -f bestaudio -x --audio-format mp3 --audio-quality 0 --output "${filepath}" "${url}"`,
-      `yt-dlp -f worstaudio -x --audio-format mp3 --output "${filepath}" "${url}"`,
-      `yt-dlp -f ba -x --audio-format mp3 --output "${filepath}" "${url}"`,
-      `yt-dlp -x --audio-format mp3 --output "${filepath}" "${url}"`
-    ];
-    
-    let attempt = 0;
-    
-    const tryCommand = () => {
-      if (attempt >= commands.length) {
-        reject(new Error('All yt-dlp commands failed'));
-        return;
-      }
-      
-      const command = commands[attempt];
-      console.log(`Trying yt-dlp command ${attempt + 1}:`, command);
-      
-      // Clean up previous attempt if it exists
-      if (fs.existsSync(filepath)) {
-        fs.unlinkSync(filepath);
-      }
-      
-      const ytDlpProcess = exec(command, (error, stdout, stderr) => {
-        if (error) {
-          console.error(`yt-dlp command ${attempt + 1} error:`, error.message);
-          console.error('yt-dlp stderr:', stderr);
-          
-          // Check if authentication is required
-          if (stderr && (stderr.includes("Sign in to confirm you're not a bot") || 
-              stderr.includes("confirm you're not a bot") ||
-              stderr.includes('authentication'))) {
-            reject(new Error('This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.'));
-            return;
-          }
-          
-          attempt++;
-          tryCommand(); // Try next command
-          return;
-        }
-        
-        console.log(`yt-dlp command ${attempt + 1} success:`, stdout);
-        // Check if file was created
-        if (!fs.existsSync(filepath)) {
-          console.error(`yt-dlp command ${attempt + 1} failed: File not created`);
-          attempt++;
-          tryCommand(); // Try next command
-          return;
-        }
-        
-        resolve();
-      });
-      
-      // Add timeout for yt-dlp process
-      setTimeout(() => {
-        console.log(`yt-dlp command ${attempt + 1} timeout`);
-        // Kill the process if it's still running
-        ytDlpProcess.kill();
-        // Clean up potentially incomplete file
-        if (fs.existsSync(filepath)) {
-          fs.unlinkSync(filepath);
-        }
-        attempt++;
-        tryCommand(); // Try next command
-      }, 60000); // 60 second timeout
-    };
-    
-    tryCommand(); // Start with first command
   });
 }
 
@@ -405,10 +137,10 @@ app.post('/convert', async (req, res) => {
     const filename = `video_${timestamp}.mp3`;
     const filepath = path.join(downloadsDir, filename);
     
-    // Try ytdl-core first
-    console.log('Trying ytdl-core...');
+    // Try conversion with improved error handling
+    console.log('Trying conversion...');
     try {
-      await convertWithYtdl(url, filepath, res);
+      await convertVideo(url, filepath);
       
       // If successful, return response
       if (!res.headersSent) {
@@ -430,187 +162,18 @@ app.post('/convert', async (req, res) => {
         }
       }
       return;
-    } catch (ytdlError) {
-      console.error('ytdl-core failed after all attempts:', ytdlError.message);
+    } catch (conversionError) {
+      console.error('Conversion failed:', conversionError.message);
       
       // Clean up failed file if it exists
       if (fs.existsSync(filepath)) {
         fs.unlinkSync(filepath);
       }
       
-      // Check if it's a 410 error (Gone)
-      if (ytdlError.message.includes('Status code: 410') || ytdlError.message.includes('410')) {
-        console.log('Video is no longer available (Status code: 410)');
-        return res.status(404).json({ 
-          error: 'This video is no longer available (Status code: 410). It may have been removed or is unavailable.' 
-        });
-      }
-      
-      // Check if authentication is required
-      if (ytdlError.message.includes("Sign in to confirm you're not a bot") || 
-          ytdlError.message.includes("confirm you're not a bot") ||
-          ytdlError.message.includes('authentication')) {
-        console.log('Authentication required for this video');
-        return res.status(403).json({ 
-          error: 'This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.' 
-        });
-      }
-      
-      // Try youtube-dl-exec as second fallback
-      console.log('Trying youtube-dl-exec as fallback...');
-      try {
-        await convertWithYoutubeDlExec(url, filepath);
-        
-        // If successful, return response
-        if (!res.headersSent) {
-          try {
-            // Get file size
-            const stats = fs.statSync(filepath);
-            const fileSizeInBytes = stats.size;
-            const fileSizeInMB = (fileSizeInBytes / (1024 * 1024)).toFixed(2);
-            
-            res.json({ 
-              success: true, 
-              filename: filename,
-              downloadUrl: `/download/${encodeURIComponent(filename)}`,
-              fileSize: fileSizeInMB
-            });
-          } catch (fileError) {
-            console.error('Error getting file stats:', fileError);
-            res.status(500).json({ error: 'Failed to get file information: ' + fileError.message });
-          }
-        }
-        return;
-      } catch (youtubeDlExecError) {
-        console.error('youtube-dl-exec failed:', youtubeDlExecError.message);
-        
-        // Clean up failed file if it exists
-        if (fs.existsSync(filepath)) {
-          fs.unlinkSync(filepath);
-        }
-        
-        // Check if it's a 410 error (Gone)
-        if (youtubeDlExecError.message.includes('Status code: 410') || youtubeDlExecError.message.includes('410')) {
-          console.log('Video is no longer available (Status code: 410)');
-          return res.status(404).json({ 
-            error: 'This video is no longer available (Status code: 410). It may have been removed or is unavailable.' 
-          });
-        }
-        
-        // Check if authentication is required
-        if (youtubeDlExecError.message.includes("Sign in to confirm you're not a bot") || 
-            youtubeDlExecError.message.includes("confirm you're not a bot") ||
-            youtubeDlExecError.message.includes('authentication')) {
-          console.log('Authentication required for this video');
-          return res.status(403).json({ 
-            error: 'This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.' 
-          });
-        }
-        
-        // Check if youtube-dl is available
-        const youtubeDlAvailable = await isYoutubeDlAvailable();
-        console.log('youtube-dl available:', youtubeDlAvailable);
-        
-        if (youtubeDlAvailable) {
-          // Try youtube-dl as third fallback
-          console.log('Trying youtube-dl as fallback...');
-          try {
-            await convertWithYoutubeDl(url, filepath, res);
-            
-            // If successful, return response
-            if (!res.headersSent) {
-              try {
-                // Get file size
-                const stats = fs.statSync(filepath);
-                const fileSizeInBytes = stats.size;
-                const fileSizeInMB = (fileSizeInBytes / (1024 * 1024)).toFixed(2);
-                
-                res.json({ 
-                  success: true, 
-                  filename: filename,
-                  downloadUrl: `/download/${encodeURIComponent(filename)}`,
-                  fileSize: fileSizeInMB
-                });
-              } catch (fileError) {
-                console.error('Error getting file stats:', fileError);
-                res.status(500).json({ error: 'Failed to get file information: ' + fileError.message });
-              }
-            }
-            return;
-          } catch (youtubeDlError) {
-            console.error('youtube-dl failed after all attempts:', youtubeDlError.message);
-            
-            // Check if authentication is required for youtube-dl as well
-            if (youtubeDlError.message.includes("Sign in to confirm you're not a bot") || 
-                youtubeDlError.message.includes("confirm you're not a bot") ||
-                youtubeDlError.message.includes('authentication')) {
-              console.log('Authentication required for this video (youtube-dl)');
-              return res.status(403).json({ 
-                error: 'This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.' 
-              });
-            }
-            
-            // Clean up failed file if it exists
-            if (fs.existsSync(filepath)) {
-              fs.unlinkSync(filepath);
-            }
-          }
-        }
-        
-        // Check if yt-dlp is available
-        const ytDlpAvailable = await isYtDlpAvailable();
-        console.log('yt-dlp available:', ytDlpAvailable);
-        
-        if (!ytDlpAvailable) {
-          console.log('yt-dlp is not available on this system');
-          return res.status(500).json({ 
-            error: 'All methods failed. ytdl-core error: ' + ytdlError.message + '. youtube-dl-exec error: ' + youtubeDlExecError.message + '. youtube-dl is not available on this server.' 
-          });
-        }
-        
-        // If youtube-dl-exec fails and yt-dlp is available, try yt-dlp as final fallback
-        console.log('Trying yt-dlp as final fallback...');
-        try {
-          await convertWithYtDlp(url, filepath, res);
-          
-          // If successful, return response
-          if (!res.headersSent) {
-            try {
-              // Get file size
-              const stats = fs.statSync(filepath);
-              const fileSizeInBytes = stats.size;
-              const fileSizeInMB = (fileSizeInBytes / (1024 * 1024)).toFixed(2);
-              
-              res.json({ 
-                success: true, 
-                filename: filename,
-                downloadUrl: `/download/${encodeURIComponent(filename)}`,
-                fileSize: fileSizeInMB
-              });
-            } catch (fileError) {
-              console.error('Error getting file stats:', fileError);
-              res.status(500).json({ error: 'Failed to get file information: ' + fileError.message });
-            }
-          }
-          return;
-        } catch (ytDlpError) {
-          console.error('yt-dlp failed after all attempts:', ytDlpError.message);
-          
-          // Check if authentication is required for yt-dlp as well
-          if (ytDlpError.message.includes("Sign in to confirm you're not a bot") || 
-              ytDlpError.message.includes("confirm you're not a bot") ||
-              ytDlpError.message.includes('authentication')) {
-            console.log('Authentication required for this video (yt-dlp)');
-            return res.status(403).json({ 
-              error: 'This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.' 
-            });
-          }
-          
-          return res.status(500).json({ 
-            error: 'All methods failed. ytdl-core error: ' + ytdlError.message + '. youtube-dl-exec error: ' + youtubeDlExecError.message + '. youtube-dl error: ' + (youtubeDlError?.message || 'N/A') + '. yt-dlp error: ' + ytDlpError.message
-          });
-        }
-      }
+      // Return appropriate error message
+      return res.status(403).json({ 
+        error: conversionError.message 
+      });
     }
   } catch (error) {
     console.error('Conversion error:', error);
@@ -656,15 +219,6 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
-  
-  // Check if yt-dlp is available on startup
-  isYtDlpAvailable().then((available) => {
-    if (available) {
-      console.log('yt-dlp is available on this system');
-    } else {
-      console.log('yt-dlp is NOT available on this system - only ytdl-core will be used');
-    }
-  });
 });
 
 // Handle uncaught exceptions
