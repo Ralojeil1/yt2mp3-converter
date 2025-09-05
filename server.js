@@ -260,8 +260,9 @@ function convertWithYoutubeDl(url, filepath, res) {
           
           // Check if authentication is required
           if (stderr && (stderr.includes("Sign in to confirm you're not a bot") || 
+              stderr.includes("confirm you're not a bot") ||
               stderr.includes('authentication'))) {
-            reject(new Error('Authentication required: ' + stderr));
+            reject(new Error('This video requires authentication/sign-in. Unfortunately, this service cannot download protected content. Please try a different video.'));
             return;
           }
           
@@ -336,8 +337,9 @@ function convertWithYtDlp(url, filepath, res) {
           
           // Check if authentication is required
           if (stderr && (stderr.includes("Sign in to confirm you're not a bot") || 
+              stderr.includes("confirm you're not a bot") ||
               stderr.includes('authentication'))) {
-            reject(new Error('Authentication required: ' + stderr));
+            reject(new Error('This video requires authentication/sign-in. Unfortunately, this service cannot download protected content. Please try a different video.'));
             return;
           }
           
@@ -464,6 +466,7 @@ app.post('/convert', async (req, res) => {
         
         // Check if authentication is required
         if (youtubeDlExecError.message.includes("Sign in to confirm you're not a bot") || 
+            youtubeDlExecError.message.includes("confirm you're not a bot") ||
             youtubeDlExecError.message.includes('authentication')) {
           console.log('Authentication required for this video');
           return res.status(403).json({ 
@@ -506,6 +509,7 @@ app.post('/convert', async (req, res) => {
             
             // Check if authentication is required for youtube-dl as well
             if (youtubeDlError.message.includes("Sign in to confirm you're not a bot") || 
+                youtubeDlError.message.includes("confirm you're not a bot") ||
                 youtubeDlError.message.includes('authentication')) {
               console.log('Authentication required for this video (youtube-dl)');
               return res.status(403).json({ 
@@ -561,6 +565,7 @@ app.post('/convert', async (req, res) => {
           
           // Check if authentication is required for yt-dlp as well
           if (ytDlpError.message.includes("Sign in to confirm you're not a bot") || 
+              ytDlpError.message.includes("confirm you're not a bot") ||
               ytDlpError.message.includes('authentication')) {
             console.log('Authentication required for this video (yt-dlp)');
             return res.status(403).json({ 
