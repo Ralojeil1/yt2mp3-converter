@@ -269,7 +269,7 @@ function convertWithYoutubeDl(url, filepath, res) {
           if (stderr && (stderr.includes("Sign in to confirm you're not a bot") || 
               stderr.includes("confirm you're not a bot") ||
               stderr.includes('authentication'))) {
-            reject(new Error('This video requires authentication/sign-in. Unfortunately, this service cannot download protected content. Please try a different video.'));
+            reject(new Error('This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.'));
             return;
           }
           
@@ -346,7 +346,7 @@ function convertWithYtDlp(url, filepath, res) {
           if (stderr && (stderr.includes("Sign in to confirm you're not a bot") || 
               stderr.includes("confirm you're not a bot") ||
               stderr.includes('authentication'))) {
-            reject(new Error('This video requires authentication/sign-in. Unfortunately, this service cannot download protected content. Please try a different video.'));
+            reject(new Error('This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.'));
             return;
           }
           
@@ -452,9 +452,14 @@ app.post('/convert', async (req, res) => {
           ytdlError.message.includes('authentication')) {
         console.log('Authentication required for this video');
         return res.status(403).json({ 
-          error: 'This video requires authentication/sign-in. Unfortunately, this service cannot download protected content. Please try a different video.' 
+          error: 'This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.' 
         });
       }
+      
+      // Try youtube-dl-exec as second fallback
+      console.log('Trying youtube-dl-exec as fallback...');
+      try {
+        await convertWithYoutubeDlExec(url, filepath);
         
         // If successful, return response
         if (!res.headersSent) {
@@ -498,7 +503,7 @@ app.post('/convert', async (req, res) => {
             youtubeDlExecError.message.includes('authentication')) {
           console.log('Authentication required for this video');
           return res.status(403).json({ 
-            error: 'This video requires authentication/sign-in. Unfortunately, this service cannot download protected content. Please try a different video.' 
+            error: 'This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.' 
           });
         }
         
@@ -541,7 +546,7 @@ app.post('/convert', async (req, res) => {
                 youtubeDlError.message.includes('authentication')) {
               console.log('Authentication required for this video (youtube-dl)');
               return res.status(403).json({ 
-                error: 'This video requires authentication/sign-in. Unfortunately, this service cannot download protected content. Please try a different video.' 
+                error: 'This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.' 
               });
             }
             
@@ -597,7 +602,7 @@ app.post('/convert', async (req, res) => {
               ytDlpError.message.includes('authentication')) {
             console.log('Authentication required for this video (yt-dlp)');
             return res.status(403).json({ 
-              error: 'This video requires authentication/sign-in. Unfortunately, this service cannot download protected content. Please try a different video.' 
+              error: 'This video requires authentication/sign-in and cannot be downloaded. This is a limitation of YouTube\'s policies to prevent automated downloading. Please try a different public video that doesn\'t require sign-in.' 
             });
           }
           
