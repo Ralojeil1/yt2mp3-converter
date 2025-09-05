@@ -21,14 +21,15 @@ class YouTubeConverter {
                 body: JSON.stringify({ url: youtubeUrl })
             });
             
+            const data = await response.json();
+            
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                throw new Error(data.error || `HTTP error! status: ${response.status}`);
             }
             
-            const data = await response.json();
             return data;
         } catch (error) {
-            throw new Error('Conversion failed: ' + error.message);
+            throw new Error(error.message);
         }
     }
 }
