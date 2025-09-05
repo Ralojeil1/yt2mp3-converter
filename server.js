@@ -1,6 +1,7 @@
 const express = require('express');
 const ytdl = require('ytdl-core');
 const { exec } = require('child_process');
+const { youtubeDl } = require('youtube-dl-exec');
 const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
@@ -118,6 +119,50 @@ function convertWithYtdl(url, filepath, res) {
     
     tryConfig(); // Start with first config
   });
+}
+
+// Function to convert using youtube-dl-exec
+async function convertWithYoutubeDlExec(url, filepath) {
+  try {
+    console.log('Converting with youtube-dl-exec...');
+    
+    // Remove .mp3 extension as youtube-dl will add it
+    const outputPath = filepath.replace('.mp3', '');
+    
+    await youtubeDl(url, {
+      extractAudio: true,
+      audioFormat: 'mp3',
+      output: outputPath,
+      preferFreeFormats: true
+    });
+    
+    // Check if file was created with .mp3 extension
+    if (!fs.existsSync(filepath)) {
+      // Sometimes youtube-dl creates files with different extensions
+      const possibleFiles = [
+        `${outputPath}.mp3`,
+        `${outputPath}.webm`,
+        `${outputPath}.m4a`
+      ];
+      
+      for (const file of possibleFiles) {
+        if (fs.existsSync(file)) {
+          // Rename to .mp3 if needed
+          fs.renameSync(file, filepath);
+          break;
+        }
+      }
+    }
+    
+    if (!fs.existsSync(filepath)) {
+      throw new Error('File was not created with youtube-dl-exec');
+    }
+    
+    console.log('File saved successfully with youtube-dl-exec:', filepath);
+  } catch (error) {
+    console.error('youtube-dl-exec error:', error);
+    throw new Error('Failed with youtube-dl-exec: ' + error.message);
+  }
 }
 
 // Function to convert using yt-dlp
@@ -241,21 +286,10 @@ app.post('/convert', async (req, res) => {
         fs.unlinkSync(filepath);
       }
       
-      // Check if yt-dlp is available
-      const ytDlpAvailable = await isYtDlpAvailable();
-      console.log('yt-dlp available:', ytDlpAvailable);
-      
-      if (!ytDlpAvailable) {
-        console.log('yt-dlp is not available on this system');
-        return res.status(500).json({ 
-          error: 'Both ytdl-core and yt-dlp failed. ytdl-core error: ' + ytdlError.message + '. yt-dlp is not available on this server.' 
-        });
-      }
-      
-      // If ytdl-core fails and yt-dlp is available, try yt-dlp as fallback
-      console.log('Trying yt-dlp as fallback...');
+      // Try youtube-dl-exec as second fallback
+      console.log('Trying youtube-dl-exec as fallback...');
       try {
-        await convertWithYtDlp(url, filepath, res);
+        await convertWithYoutubeDlExec(url, filepath);
         
         // If successful, return response
         if (!res.headersSent) {
@@ -277,11 +311,56 @@ app.post('/convert', async (req, res) => {
           }
         }
         return;
-      } catch (ytDlpError) {
-        console.error('yt-dlp failed after all attempts:', ytDlpError.message);
-        return res.status(500).json({ 
-          error: 'Both ytdl-core and yt-dlp failed after multiple attempts. ytdl-core error: ' + ytdlError.message + '. yt-dlp error: ' + ytDlpError.message
-        });
+      } catch (youtubeDlExecError) {
+        console.error('youtube-dl-exec failed:', youtubeDlExecError.message);
+        
+        // Clean up failed file if it exists
+        if (fs.existsSync(filepath)) {
+          fs.unlinkSync(filepath);
+        }
+        
+        // Check if yt-dlp is available
+        const ytDlpAvailable = await isYtDlpAvailable();
+        console.log('yt-dlp available:', ytDlpAvailable);
+        
+        if (!ytDlpAvailable) {
+          console.log('yt-dlp is not available on this system');
+          return res.status(500).json({ 
+            error: 'All methods failed. ytdl-core error: ' + ytdlError.message + '. youtube-dl-exec error: ' + youtubeDlExecError.message + '. yt-dlp is not available on this server.' 
+          });
+        }
+        
+        // If youtube-dl-exec fails and yt-dlp is available, try yt-dlp as final fallback
+        console.log('Trying yt-dlp as final fallback...');
+        try {
+          await convertWithYtDlp(url, filepath, res);
+          
+          // If successful, return response
+          if (!res.headersSent) {
+            try {
+              // Get file size
+              const stats = fs.statSync(filepath);
+              const fileSizeInBytes = stats.size;
+              const fileSizeInMB = (fileSizeInBytes / (1024 * 1024)).toFixed(2);
+              
+              res.json({ 
+                success: true, 
+                filename: filename,
+                downloadUrl: `/download/${encodeURIComponent(filename)}`,
+                fileSize: fileSizeInMB
+              });
+            } catch (fileError) {
+              console.error('Error getting file stats:', fileError);
+              res.status(500).json({ error: 'Failed to get file information: ' + fileError.message });
+            }
+          }
+          return;
+        } catch (ytDlpError) {
+          console.error('yt-dlp failed after all attempts:', ytDlpError.message);
+          return res.status(500).json({ 
+            error: 'All methods failed. ytdl-core error: ' + ytdlError.message + '. youtube-dl-exec error: ' + youtubeDlExecError.message + '. yt-dlp error: ' + ytDlpError.message
+          });
+        }
       }
     }
   } catch (error) {
