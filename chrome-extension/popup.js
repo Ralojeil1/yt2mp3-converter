@@ -1,5 +1,8 @@
 // API service for YouTube to MP3 conversion
 class YouTubeConverter {
+    // Base URL for your deployed server
+    static BASE_URL = 'https://yt2mp3-converter-auum.onrender.com';
+    
     // Extract YouTube video ID from URL
     static extractVideoId(url) {
         const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
@@ -7,36 +10,25 @@ class YouTubeConverter {
         return (match && match[2].length === 11) ? match[2] : null;
     }
     
-    // Get video info using YouTube oEmbed API
-    static async getVideoInfo(videoId) {
-        try {
-            // In a real implementation, you would use the YouTube Data API
-            // For now, we'll return mock data
-            return {
-                title: "Sample YouTube Video",
-                duration: "3:45",
-                thumbnail: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`
-            };
-        } catch (error) {
-            throw new Error('Failed to get video info');
-        }
-    }
-    
     // Convert YouTube video to MP3
-    static async convertToMp3(videoId) {
+    static async convertToMp3(youtubeUrl) {
         try {
-            // In a real implementation, you would call a conversion API
-            // For demonstration, we'll simulate the conversion
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            const response = await fetch(`${this.BASE_URL}/convert`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ url: youtubeUrl })
+            });
             
-            // Return mock conversion result
-            return {
-                success: true,
-                downloadUrl: `https://example.com/download/${videoId}.mp3`,
-                fileSize: (Math.random() * 10 + 2).toFixed(1) // Random file size between 2-12 MB
-            };
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            return data;
         } catch (error) {
-            throw new Error('Conversion failed');
+            throw new Error('Conversion failed: ' + error.message);
         }
     }
 }
@@ -92,34 +84,40 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error('Invalid YouTube URL');
             }
 
-            // Get video info
-            const videoInfo = await YouTubeConverter.getVideoInfo(videoId);
-            
-            // Update UI with video info
-            videoTitle.textContent = videoInfo.title;
-            videoDuration.textContent = videoInfo.duration;
-            videoThumbnail.src = videoInfo.thumbnail;
+            // Set placeholder video info while converting
+            videoTitle.textContent = "Converting video...";
+            videoDuration.textContent = "Please wait";
+            videoThumbnail.src = `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`;
             videoThumbnail.onerror = function() {
-                this.src = 'https://placehold.co/160x90/000000/00ff41?text=No+Thumbnail';
+                this.src = 'https://placehold.co/160x90/000000/00ff41?text=Converting...';
             };
 
-            // Convert to MP3
-            const conversionResult = await YouTubeConverter.convertToMp3(videoId);
+            // Convert to MP3 using your deployed server
+            const conversionResult = await YouTubeConverter.convertToMp3(url);
 
             if (conversionResult.success) {
+                // Update with actual video info (we'll use placeholder since we don't have the actual title)
+                videoTitle.textContent = "YouTube Video";
+                videoDuration.textContent = "3:45"; // Placeholder
+                
                 // Update file size
                 if (conversionResult.fileSize) {
                     fileSizeElement.textContent = `File size: ~${conversionResult.fileSize} MB`;
+                } else {
+                    fileSizeElement.textContent = `File size: ~5.2 MB`; // Default placeholder
                 }
                 
                 // Add download URL to button
                 downloadButton.onclick = function() {
-                    chrome.tabs.create({url: conversionResult.downloadUrl});
+                    // Use the full download URL from your server
+                    chrome.tabs.create({url: YouTubeConverter.BASE_URL + conversionResult.downloadUrl});
                 };
                 
                 // Show result
                 loadingBox.style.display = 'none';
                 resultBox.style.display = 'block';
+            } else {
+                throw new Error(conversionResult.error || 'Conversion failed');
             }
         } catch (error) {
             alert('Conversion failed: ' + error.message);

@@ -8,8 +8,16 @@ const cors = require('cors');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
-app.use(cors());
+// Middleware with CORS configuration for Chrome extension
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'https://yt2mp3-converter-auum.onrender.com',
+    'chrome-extension://*'  // Allow all Chrome extensions
+  ],
+  credentials: true
+}));
 app.use(express.json());
 
 // Serve static files from the public directory

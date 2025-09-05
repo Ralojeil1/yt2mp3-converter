@@ -10,7 +10,8 @@
   ],
   "host_permissions": [
     "http://localhost:3000/*",
-    "http://127.0.0.1:3000/*"
+    "http://127.0.0.1:3000/*",
+    "https://yt2mp3-converter-auum.onrender.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
