@@ -50,6 +50,23 @@ function isYoutubeDlAvailable() {
   });
 }
 
+// Function to get video info using ytdl-core
+async function getVideoInfoWithYtdl(url) {
+  try {
+    console.log('Getting video info with ytdl-core...');
+    const info = await ytdl.getInfo(url);
+    console.log('Video info retrieved successfully with ytdl-core');
+    return {
+      title: info.videoDetails.title,
+      duration: info.videoDetails.lengthSeconds,
+      thumbnail: info.videoDetails.thumbnails[0]?.url || ''
+    };
+  } catch (error) {
+    console.error('Error getting video info with ytdl-core:', error);
+    throw error;
+  }
+}
+
 // Function to convert using ytdl-core with fallback options
 function convertWithYtdl(url, filepath, res) {
   return new Promise((resolve, reject) => {
@@ -207,7 +224,157 @@ async function convertWithYoutubeDlExec(url, filepath) {
   }
 }
 
-// Function to convert using youtube-dl (original tool)\nfunction convertWithYoutubeDl(url, filepath, res) {\n  return new Promise((resolve, reject) => {\n    console.log('Converting with youtube-dl...');\n    \n    // Try different youtube-dl configurations as fallbacks\n    const commands = [\n      `youtube-dl -f bestaudio -x --audio-format mp3 --audio-quality 0 --output \"${filepath}\" \"${url}\"`,\n      `youtube-dl -f worstaudio -x --audio-format mp3 --output \"${filepath}\" \"${url}\"`,\n      `youtube-dl -f ba -x --audio-format mp3 --output \"${filepath}\" \"${url}\"`,\n      `youtube-dl -x --audio-format mp3 --output \"${filepath}\" \"${url}\"`\n    ];\n    \n    let attempt = 0;\n    \n    const tryCommand = () => {\n      if (attempt >= commands.length) {\n        reject(new Error('All youtube-dl commands failed'));\n        return;\n      }\n      \n      const command = commands[attempt];\n      console.log(`Trying youtube-dl command ${attempt + 1}:`, command);\n      \n      // Clean up previous attempt if it exists\n      if (fs.existsSync(filepath)) {\n        fs.unlinkSync(filepath);\n      }\n      \n      const youtubeDlProcess = exec(command, (error, stdout, stderr) => {\n        if (error) {\n          console.error(`youtube-dl command ${attempt + 1} error:`, error.message);\n          console.error('youtube-dl stderr:', stderr);\n          \n          // Check if authentication is required\n          if (stderr && (stderr.includes('Sign in to confirm you\\'re not a bot') || \n              stderr.includes('authentication'))) {\n            reject(new Error('Authentication required: ' + stderr));\n            return;\n          }\n          \n          attempt++;\n          tryCommand(); // Try next command\n          return;\n        }\n        \n        console.log(`youtube-dl command ${attempt + 1} success:`, stdout);\n        // Check if file was created\n        if (!fs.existsSync(filepath)) {\n          console.error(`youtube-dl command ${attempt + 1} failed: File not created`);\n          attempt++;\n          tryCommand(); // Try next command\n          return;\n        }\n        \n        resolve();\n      });\n      \n      // Add timeout for youtube-dl process\n      setTimeout(() => {\n        console.log(`youtube-dl command ${attempt + 1} timeout`);\n        // Kill the process if it's still running\n        youtubeDlProcess.kill();\n        // Clean up potentially incomplete file\n        if (fs.existsSync(filepath)) {\n          fs.unlinkSync(filepath);\n        }\n        attempt++;\n        tryCommand(); // Try next command\n      }, 60000); // 60 second timeout\n    };\n    \n    tryCommand(); // Start with first command\n  });\n}\n\n// Function to convert using yt-dlp\nfunction convertWithYtDlp(url, filepath, res) {\n  return new Promise((resolve, reject) => {\n    console.log('Converting with yt-dlp...');\n    \n    // Try different yt-dlp configurations as fallbacks\n    const commands = [\n      `yt-dlp -f bestaudio -x --audio-format mp3 --audio-quality 0 --output \"${filepath}\" \"${url}\"`,\n      `yt-dlp -f worstaudio -x --audio-format mp3 --output \"${filepath}\" \"${url}\"`,\n      `yt-dlp -f ba -x --audio-format mp3 --output \"${filepath}\" \"${url}\"`,\n      `yt-dlp -x --audio-format mp3 --output \"${filepath}\" \"${url}\"`\n    ];\n    \n    let attempt = 0;\n    \n    const tryCommand = () => {\n      if (attempt >= commands.length) {\n        reject(new Error('All yt-dlp commands failed'));\n        return;\n      }\n      \n      const command = commands[attempt];\n      console.log(`Trying yt-dlp command ${attempt + 1}:`, command);\n      \n      // Clean up previous attempt if it exists\n      if (fs.existsSync(filepath)) {\n        fs.unlinkSync(filepath);\n      }\n      \n      const ytDlpProcess = exec(command, (error, stdout, stderr) => {\n        if (error) {\n          console.error(`yt-dlp command ${attempt + 1} error:`, error.message);\n          console.error('yt-dlp stderr:', stderr);\n          \n          // Check if authentication is required\n          if (stderr && (stderr.includes('Sign in to confirm you\\'re not a bot') || \n              stderr.includes('authentication'))) {\n            reject(new Error('Authentication required: ' + stderr));\n            return;\n          }\n          \n          attempt++;\n          tryCommand(); // Try next command\n          return;\n        }\n        \n        console.log(`yt-dlp command ${attempt + 1} success:`, stdout);\n        // Check if file was created\n        if (!fs.existsSync(filepath)) {\n          console.error(`yt-dlp command ${attempt + 1} failed: File not created`);\n          attempt++;\n          tryCommand(); // Try next command\n          return;\n        }\n        \n        resolve();\n      });\n      \n      // Add timeout for yt-dlp process\n      setTimeout(() => {\n        console.log(`yt-dlp command ${attempt + 1} timeout`);\n        // Kill the process if it's still running\n        ytDlpProcess.kill();\n        // Clean up potentially incomplete file\n        if (fs.existsSync(filepath)) {\n          fs.unlinkSync(filepath);\n        }\n        attempt++;\n        tryCommand(); // Try next command\n      }, 60000); // 60 second timeout\n    };\n    \n    tryCommand(); // Start with first command\n  });\n}
+// Function to convert using youtube-dl (original tool)
+function convertWithYoutubeDl(url, filepath, res) {
+  return new Promise((resolve, reject) => {
+    console.log('Converting with youtube-dl...');
+    
+    // Try different youtube-dl configurations as fallbacks
+    const commands = [
+      `youtube-dl -f bestaudio -x --audio-format mp3 --audio-quality 0 --output "${filepath}" "${url}"`,
+      `youtube-dl -f worstaudio -x --audio-format mp3 --output "${filepath}" "${url}"`,
+      `youtube-dl -f ba -x --audio-format mp3 --output "${filepath}" "${url}"`,
+      `youtube-dl -x --audio-format mp3 --output "${filepath}" "${url}"`
+    ];
+    
+    let attempt = 0;
+    
+    const tryCommand = () => {
+      if (attempt >= commands.length) {
+        reject(new Error('All youtube-dl commands failed'));
+        return;
+      }
+      
+      const command = commands[attempt];
+      console.log(`Trying youtube-dl command ${attempt + 1}:`, command);
+      
+      // Clean up previous attempt if it exists
+      if (fs.existsSync(filepath)) {
+        fs.unlinkSync(filepath);
+      }
+      
+      const youtubeDlProcess = exec(command, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`youtube-dl command ${attempt + 1} error:`, error.message);
+          console.error('youtube-dl stderr:', stderr);
+          
+          // Check if authentication is required
+          if (stderr && (stderr.includes("Sign in to confirm you're not a bot") || 
+              stderr.includes('authentication'))) {
+            reject(new Error('Authentication required: ' + stderr));
+            return;
+          }
+          
+          attempt++;
+          tryCommand(); // Try next command
+          return;
+        }
+        
+        console.log(`youtube-dl command ${attempt + 1} success:`, stdout);
+        // Check if file was created
+        if (!fs.existsSync(filepath)) {
+          console.error(`youtube-dl command ${attempt + 1} failed: File not created`);
+          attempt++;
+          tryCommand(); // Try next command
+          return;
+        }
+        
+        resolve();
+      });
+      
+      // Add timeout for youtube-dl process
+      setTimeout(() => {
+        console.log(`youtube-dl command ${attempt + 1} timeout`);
+        // Kill the process if it's still running
+        youtubeDlProcess.kill();
+        // Clean up potentially incomplete file
+        if (fs.existsSync(filepath)) {
+          fs.unlinkSync(filepath);
+        }
+        attempt++;
+        tryCommand(); // Try next command
+      }, 60000); // 60 second timeout
+    };
+    
+    tryCommand(); // Start with first command
+  });
+}
+
+// Function to convert using yt-dlp
+function convertWithYtDlp(url, filepath, res) {
+  return new Promise((resolve, reject) => {
+    console.log('Converting with yt-dlp...');
+    
+    // Try different yt-dlp configurations as fallbacks
+    const commands = [
+      `yt-dlp -f bestaudio -x --audio-format mp3 --audio-quality 0 --output "${filepath}" "${url}"`,
+      `yt-dlp -f worstaudio -x --audio-format mp3 --output "${filepath}" "${url}"`,
+      `yt-dlp -f ba -x --audio-format mp3 --output "${filepath}" "${url}"`,
+      `yt-dlp -x --audio-format mp3 --output "${filepath}" "${url}"`
+    ];
+    
+    let attempt = 0;
+    
+    const tryCommand = () => {
+      if (attempt >= commands.length) {
+        reject(new Error('All yt-dlp commands failed'));
+        return;
+      }
+      
+      const command = commands[attempt];
+      console.log(`Trying yt-dlp command ${attempt + 1}:`, command);
+      
+      // Clean up previous attempt if it exists
+      if (fs.existsSync(filepath)) {
+        fs.unlinkSync(filepath);
+      }
+      
+      const ytDlpProcess = exec(command, (error, stdout, stderr) => {
+        if (error) {
+          console.error(`yt-dlp command ${attempt + 1} error:`, error.message);
+          console.error('yt-dlp stderr:', stderr);
+          
+          // Check if authentication is required
+          if (stderr && (stderr.includes("Sign in to confirm you're not a bot") || 
+              stderr.includes('authentication'))) {
+            reject(new Error('Authentication required: ' + stderr));
+            return;
+          }
+          
+          attempt++;
+          tryCommand(); // Try next command
+          return;
+        }
+        
+        console.log(`yt-dlp command ${attempt + 1} success:`, stdout);
+        // Check if file was created
+        if (!fs.existsSync(filepath)) {
+          console.error(`yt-dlp command ${attempt + 1} failed: File not created`);
+          attempt++;
+          tryCommand(); // Try next command
+          return;
+        }
+        
+        resolve();
+      });
+      
+      // Add timeout for yt-dlp process
+      setTimeout(() => {
+        console.log(`yt-dlp command ${attempt + 1} timeout`);
+        // Kill the process if it's still running
+        ytDlpProcess.kill();
+        // Clean up potentially incomplete file
+        if (fs.existsSync(filepath)) {
+          fs.unlinkSync(filepath);
+        }
+        attempt++;
+        tryCommand(); // Try next command
+      }, 60000); // 60 second timeout
+    };
+    
+    tryCommand(); // Start with first command
+  });
+}
 
 // API Routes
 app.post('/convert', async (req, res) => {
@@ -296,7 +463,7 @@ app.post('/convert', async (req, res) => {
         }
         
         // Check if authentication is required
-        if (youtubeDlExecError.message.includes('Sign in to confirm you\\'re not a bot') || 
+        if (youtubeDlExecError.message.includes("Sign in to confirm you're not a bot") || 
             youtubeDlExecError.message.includes('authentication')) {
           console.log('Authentication required for this video');
           return res.status(403).json({ 
@@ -338,7 +505,7 @@ app.post('/convert', async (req, res) => {
             console.error('youtube-dl failed after all attempts:', youtubeDlError.message);
             
             // Check if authentication is required for youtube-dl as well
-            if (youtubeDlError.message.includes('Sign in to confirm you\'re not a bot') || 
+            if (youtubeDlError.message.includes("Sign in to confirm you're not a bot") || 
                 youtubeDlError.message.includes('authentication')) {
               console.log('Authentication required for this video (youtube-dl)');
               return res.status(403).json({ 
@@ -393,7 +560,7 @@ app.post('/convert', async (req, res) => {
           console.error('yt-dlp failed after all attempts:', ytDlpError.message);
           
           // Check if authentication is required for yt-dlp as well
-          if (ytDlpError.message.includes('Sign in to confirm you\\'re not a bot') || 
+          if (ytDlpError.message.includes("Sign in to confirm you're not a bot") || 
               ytDlpError.message.includes('authentication')) {
             console.log('Authentication required for this video (yt-dlp)');
             return res.status(403).json({ 
