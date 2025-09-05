@@ -29,18 +29,31 @@ if (!fs.existsSync(downloadsDir)) {
   fs.mkdirSync(downloadsDir);
 }
 
+// Function to check if yt-dlp is available
+function isYtDlpAvailable() {
+  return new Promise((resolve) => {
+    exec('yt-dlp --version', (error) => {
+      resolve(!error);
+    });
+  });
+}
+
 // API Routes
 app.post('/convert', async (req, res) => {
   try {
     const { url } = req.body;
     console.log('Received conversion request for URL:', url);
     
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
+    }
+    
     if (!ytdl.validateURL(url)) {
       console.log('Invalid YouTube URL provided:', url);
       return res.status(400).json({ error: 'Invalid YouTube URL' });
     }
     
-    // Try ytdl-core first
+    // Try ytdl-core first (this should work on Render)
     console.log('Trying ytdl-core...');
     try {
       // Get video info
@@ -49,11 +62,13 @@ app.post('/convert', async (req, res) => {
       console.log('Video info retrieved successfully');
       
       const title = info.videoDetails.title.replace(/[^\w\s\-\.]/g, ''); // Sanitize title
-      const filename = `${title}.mp3`;
+      // Limit title length to prevent filesystem issues
+      const limitedTitle = title.substring(0, 50);
+      const filename = `${limitedTitle}_${Date.now()}.mp3`;
       const filepath = path.join(downloadsDir, filename);
       
       console.log('Creating audio stream...');
-      // Create audio stream with better quality
+      // Create audio stream
       const audioStream = ytdl(url, {
         filter: 'audioonly',
         quality: 'highestaudio',
@@ -63,7 +78,9 @@ app.post('/convert', async (req, res) => {
       // Handle audio stream errors
       audioStream.on('error', (err) => {
         console.error('Audio stream error:', err);
-        throw err; // Throw to trigger fallback
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Failed to download audio: ' + err.message });
+        }
       });
       
       console.log('Creating file stream...');
@@ -85,17 +102,22 @@ app.post('/convert', async (req, res) => {
         console.log('File saved successfully:', filepath);
         fileStream.end();
         if (!res.headersSent) {
-          // Get file size
-          const stats = fs.statSync(filepath);
-          const fileSizeInBytes = stats.size;
-          const fileSizeInMB = (fileSizeInBytes / (1024 * 1024)).toFixed(2);
-          
-          res.json({ 
-            success: true, 
-            filename: filename,
-            downloadUrl: `/download/${encodeURIComponent(filename)}`,
-            fileSize: fileSizeInMB
-          });
+          try {
+            // Get file size
+            const stats = fs.statSync(filepath);
+            const fileSizeInBytes = stats.size;
+            const fileSizeInMB = (fileSizeInBytes / (1024 * 1024)).toFixed(2);
+            
+            res.json({ 
+              success: true, 
+              filename: filename,
+              downloadUrl: `/download/${encodeURIComponent(filename)}`,
+              fileSize: fileSizeInMB
+            });
+          } catch (fileError) {
+            console.error('Error getting file stats:', fileError);
+            res.status(500).json({ error: 'Failed to get file information: ' + fileError.message });
+          }
         }
       });
       
@@ -103,12 +125,30 @@ app.post('/convert', async (req, res) => {
       setTimeout(() => {
         if (!res.headersSent) {
           console.log('Conversion timeout');
+          // Clean up potentially incomplete file
+          if (fs.existsSync(filepath)) {
+            fs.unlinkSync(filepath);
+          }
           res.status(500).json({ error: 'Conversion timed out' });
         }
-      }, 60000); // 60 second timeout
+      }, 120000); // 120 second timeout (2 minutes)
+      
     } catch (ytdlError) {
       console.error('ytdl-core failed:', ytdlError);
-      // If ytdl-core fails, try yt-dlp as fallback
+      
+      // Check if yt-dlp is available before trying to use it
+      const ytDlpAvailable = await isYtDlpAvailable();
+      if (!ytDlpAvailable) {
+        console.log('yt-dlp is not available on this system');
+        if (!res.headersSent) {
+          return res.status(500).json({ 
+            error: 'Conversion failed: Neither ytdl-core nor yt-dlp are working properly on this server. This is a server configuration issue.' 
+          });
+        }
+        return;
+      }
+      
+      // If ytdl-core fails and yt-dlp is available, try yt-dlp as fallback
       console.log('Trying yt-dlp as fallback...');
       
       // First, get video info to extract the title
@@ -120,12 +160,14 @@ app.post('/convert', async (req, res) => {
           try {
             const info = JSON.parse(infoStdout);
             title = info.title.replace(/[^\w\s\-\.]/g, ''); // Sanitize title
+            // Limit title length to prevent filesystem issues
+            title = title.substring(0, 50);
           } catch (parseError) {
             console.error('Error parsing video info:', parseError);
           }
         }
         
-        const filename = `${title}.mp3`;
+        const filename = `${title}_${Date.now()}.mp3`;
         const filepath = path.join(downloadsDir, filename);
         
         // Use yt-dlp to download and convert with higher quality
@@ -133,31 +175,59 @@ app.post('/convert', async (req, res) => {
         const command = `yt-dlp -f bestaudio -x --audio-format mp3 --audio-quality 0 --output "${filepath}" "${url}"`;
         console.log('Executing command:', command);
         
-        exec(command, (error, stdout, stderr) => {
+        const ytDlpProcess = exec(command, (error, stdout, stderr) => {
           if (error) {
             console.error('yt-dlp error:', error);
             console.error('stderr:', stderr);
             if (!res.headersSent) {
-              return res.status(500).json({ error: 'Conversion failed with both methods: ' + (stderr || error.message) });
+              // Clean up potentially incomplete file
+              if (fs.existsSync(filepath)) {
+                fs.unlinkSync(filepath);
+              }
+              return res.status(500).json({ error: 'Conversion failed: ' + (stderr || error.message) });
             }
             return;
           }
           
           console.log('yt-dlp success:', stdout);
           if (!res.headersSent) {
-            // Get file size
-            const stats = fs.statSync(filepath);
-            const fileSizeInBytes = stats.size;
-            const fileSizeInMB = (fileSizeInBytes / (1024 * 1024)).toFixed(2);
-            
-            res.json({ 
-              success: true, 
-              filename: path.basename(filepath),
-              downloadUrl: `/download/${encodeURIComponent(path.basename(filepath))}`,
-              fileSize: fileSizeInMB
-            });
+            try {
+              // Check if file was created
+              if (!fs.existsSync(filepath)) {
+                return res.status(500).json({ error: 'File was not created' });
+              }
+              
+              // Get file size
+              const stats = fs.statSync(filepath);
+              const fileSizeInBytes = stats.size;
+              const fileSizeInMB = (fileSizeInBytes / (1024 * 1024)).toFixed(2);
+              
+              res.json({ 
+                success: true, 
+                filename: path.basename(filepath),
+                downloadUrl: `/download/${encodeURIComponent(path.basename(filepath))}`,
+                fileSize: fileSizeInMB
+              });
+            } catch (fileError) {
+              console.error('Error getting file stats:', fileError);
+              res.status(500).json({ error: 'Failed to get file information: ' + fileError.message });
+            }
           }
         });
+        
+        // Add timeout for yt-dlp process
+        setTimeout(() => {
+          if (!res.headersSent) {
+            console.log('yt-dlp conversion timeout');
+            // Kill the process if it's still running
+            ytDlpProcess.kill();
+            // Clean up potentially incomplete file
+            if (fs.existsSync(filepath)) {
+              fs.unlinkSync(filepath);
+            }
+            res.status(500).json({ error: 'Conversion timed out with yt-dlp' });
+          }
+        }, 120000); // 120 second timeout (2 minutes)
       });
     }
     
@@ -205,6 +275,15 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
+  
+  // Check if yt-dlp is available on startup
+  isYtDlpAvailable().then((available) => {
+    if (available) {
+      console.log('yt-dlp is available on this system');
+    } else {
+      console.log('yt-dlp is NOT available on this system - only ytdl-core will be used');
+    }
+  });
 });
 
 // Handle uncaught exceptions
